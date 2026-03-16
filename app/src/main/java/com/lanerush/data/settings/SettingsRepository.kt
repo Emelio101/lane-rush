@@ -22,6 +22,7 @@ class SettingsRepository(private val context: Context) {
         val SPEED_UNIT = stringPreferencesKey("speed_unit")
         val SOUND_ENABLED = booleanPreferencesKey("sound_enabled")
         val SOUND_VOLUME = floatPreferencesKey("sound_volume")
+        val SWIPE_SENSITIVITY = floatPreferencesKey("swipe_sensitivity")
         val MAX_UNLOCKED_LEVEL = intPreferencesKey("max_unlocked_level")
     }
 
@@ -31,6 +32,7 @@ class SettingsRepository(private val context: Context) {
             speedUnit = SpeedUnit.valueOf(preferences[PreferencesKeys.SPEED_UNIT] ?: SpeedUnit.KMH.name),
             isSoundEnabled = preferences[PreferencesKeys.SOUND_ENABLED] ?: true,
             soundVolume = preferences[PreferencesKeys.SOUND_VOLUME] ?: 0.7f,
+            swipeSensitivity = preferences[PreferencesKeys.SWIPE_SENSITIVITY] ?: 0.5f,
             maxUnlockedLevel = preferences[PreferencesKeys.MAX_UNLOCKED_LEVEL] ?: 1
         )
     }
@@ -49,6 +51,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun updateSoundVolume(volume: Float) {
         context.dataStore.edit { it[PreferencesKeys.SOUND_VOLUME] = volume }
+    }
+
+    suspend fun updateSwipeSensitivity(sensitivity: Float) {
+        context.dataStore.edit { it[PreferencesKeys.SWIPE_SENSITIVITY] = sensitivity }
     }
 
     suspend fun updateMaxUnlockedLevel(level: Int) {

@@ -50,11 +50,20 @@ class GameViewModel(
     fun setLevel(level: Int)            { _selectedLevel.value = level }
     fun setDifficulty(diff: Difficulty) { _selectedDifficulty.value = diff }
 
+    fun nextLevel() {
+        if (_selectedLevel.value < com.lanerush.domain.model.Levels.all.size) {
+            _selectedLevel.value += 1
+            startGame()
+        }
+    }
+
     fun startGame() {
         engine.startGame(level = _selectedLevel.value, difficulty = _selectedDifficulty.value)
     }
 
     fun togglePause() = engine.togglePause()
+
+    fun pauseGame() = engine.pause()
 
     /** Throttle pressed (finger down) */
     fun throttleOn()  {

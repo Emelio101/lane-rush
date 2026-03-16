@@ -35,6 +35,7 @@ data class UserSettings(
     val speedUnit: SpeedUnit = SpeedUnit.KMH,
     val isSoundEnabled: Boolean = true,
     val soundVolume: Float = 0.7f,
+    val swipeSensitivity: Float = 0.5f,
     val maxUnlockedLevel: Int = 1
 )
 

@@ -32,4 +32,8 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
     fun updateSoundVolume(volume: Float) {
         viewModelScope.launch { repository.updateSoundVolume(volume) }
     }
+
+    fun updateSwipeSensitivity(sensitivity: Float) {
+        viewModelScope.launch { repository.updateSwipeSensitivity(sensitivity) }
+    }
 }

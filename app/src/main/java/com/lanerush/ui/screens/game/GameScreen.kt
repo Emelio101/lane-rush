@@ -27,9 +27,13 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -92,12 +96,25 @@ fun GameScreen(
     val context       = LocalContext.current
     val soundManager  = remember { SoundManager(context) }
 
-    // ── Sync settings ───────────────────────────────────────────────
-    LaunchedEffect(settings.isSoundEnabled, settings.soundVolume) {
-        soundManager.updateSettings(settings.isSoundEnabled, settings.soundVolume)
-    }
 
-    LaunchedEffect(Unit) { viewModel.startGame() }
+    // ── Audio Management & Settings Sync ────────────────────────────
+    LaunchedEffect(
+        gameState.isPaused,
+        gameState.isGameOver,
+        isAppInForeground,
+        settings.isSoundEnabled,
+        settings.soundVolume
+    ) {
+        // 1. ALWAYS apply the latest volume/mute settings FIRST
+        soundManager.updateSettings(settings.isSoundEnabled, settings.soundVolume)
+
+        // 2. THEN decide if the engine should be roaring
+        if (isAppInForeground && !gameState.isPaused && !gameState.isGameOver && settings.isSoundEnabled) {
+            soundManager.playEngine()
+        } else {
+            soundManager.stopEngine()
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.soundEvents.collect { event ->
@@ -115,12 +132,10 @@ fun GameScreen(
         }
     }
 
-    // ── Engine Audio Management (Respects lifecycle and game state) ──
-    LaunchedEffect(gameState.isPaused, gameState.isGameOver, isAppInForeground) {
-        if (isAppInForeground && !gameState.isPaused && !gameState.isGameOver) {
-            soundManager.playEngine()
-        } else {
-            soundManager.stopEngine()
+    // ── Engine Auto Pause Management When Minimized (Respects lifecycle and game state) ──
+    LaunchedEffect(isAppInForeground) {
+        if (!isAppInForeground && !gameState.isPaused && !gameState.isGameOver) {
+            viewModel.pauseGame()
         }
     }
 
@@ -128,18 +143,22 @@ fun GameScreen(
 
     GameContent(
         gameState      = gameState,
-        speedUnit      = settings.speedUnit,
+        settings       = settings,
         onThrottleOn   = { viewModel.throttleOn() },
         onThrottleOff  = { viewModel.throttleOff() },
         onSwipe        = { viewModel.onSwipe(it) },
         onTap          = { viewModel.onTap(it) },
-        onTogglePause  = { 
+        onTogglePause  = {
             soundManager.playClick()
-            viewModel.togglePause() 
+            viewModel.togglePause()
         },
-        onRestart      = { 
+        onRestart      = {
             soundManager.playClick()
-            viewModel.startGame() 
+            viewModel.startGame()
+        },
+        onNextLevel    = {
+            soundManager.playClick()
+            viewModel.nextLevel()
         },
         onNavigateBack = {
             soundManager.playClick()
@@ -154,16 +173,20 @@ fun GameScreen(
 @Composable
 fun GameContent(
     gameState: GameState,
-    speedUnit: SpeedUnit,
+    settings: UserSettings,
     onThrottleOn: () -> Unit,
     onThrottleOff: () -> Unit,
     onSwipe: (GameEngine.SwipeDirection) -> Unit,
     onTap: (Int) -> Unit,
     onTogglePause: () -> Unit,
     onRestart: () -> Unit,
+    onNextLevel: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
     var dragStartX by remember { mutableFloatStateOf(0f) }
+
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
 
     val inf = rememberInfiniteTransition(label = "anim")
     val animTick by inf.animateFloat(
@@ -173,6 +196,18 @@ fun GameContent(
         0.55f, 1f, infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), "glow"
     )
 
+    // ── ANIMATED LANE STATE ──────────────────────────────────────────
+    // This smoothly interpolates the player's visual lane position
+    val animatedPlayerLane by animateFloatAsState(
+        targetValue = gameState.player.lane.toFloat(),
+        animationSpec = tween(durationMillis = 200, easing = LinearOutSlowInEasing),
+        label = "playerLaneAnim"
+    )
+
+    // Calculate tilt/steering angle based on how far the visual car is from the target lane
+    val laneDiff = gameState.player.lane.toFloat() - animatedPlayerLane
+    val playerTiltAngle = laneDiff * 25f // Max 25 degrees of tilt when switching lanes
+
     val speedFraction = (gameState.currentSpeed / gameState.difficulty.maxSpeed).coerceIn(0f, 1f)
 
     Box(Modifier.fillMaxSize().background(C.roadBase)) {
@@ -181,8 +216,12 @@ fun GameContent(
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(gameState.isGameOver, gameState.isPaused) {
+                .pointerInput(gameState.isGameOver, gameState.isPaused, settings.swipeSensitivity) {
                     if (gameState.isGameOver || gameState.isPaused) return@pointerInput
+
+                    val baseThresholdPx = with(density) { 30.dp.toPx() }
+                    val sensitivityRangePx = with(density) { 120.dp.toPx() }
+
                     awaitPointerEventScope {
                         while (true) {
                             val down   = awaitPointerEvent()
@@ -203,22 +242,30 @@ fun GameContent(
                                         val lw   = size.width / GameConstants.LANES.toFloat()
                                         val lane = (dragStartX / lw).toInt().coerceIn(0, GameConstants.LANES - 1)
                                         onTap(lane)
-                                    } else if (abs(totalX) > abs(totalY) && abs(totalX) > 38f) {
-                                        if (totalX > 0) onSwipe(GameEngine.SwipeDirection.RIGHT)
-                                        else            onSwipe(GameEngine.SwipeDirection.LEFT)
                                     }
                                     break
                                 }
                                 val d = change.position - change.previousPosition
                                 totalX += d.x; totalY += d.y
                                 if (abs(totalX) > 8f || abs(totalY) > 8f) moved = true
+
+                                val swipeThreshold = baseThresholdPx + (1.0f - settings.swipeSensitivity) * sensitivityRangePx
+
+                                if (abs(totalX) > swipeThreshold && abs(totalX) > abs(totalY) * 1.5f) {
+                                    if (totalX > 0) onSwipe(GameEngine.SwipeDirection.RIGHT)
+                                    else            onSwipe(GameEngine.SwipeDirection.LEFT)
+
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    totalX = 0f; totalY = 0f
+                                }
+
                                 change.consume()
                             }
                         }
                     }
                 }
         ) {
-            drawScene(gameState, animTick, glowPulse, speedFraction)
+            drawScene(gameState, animTick, glowPulse, speedFraction, animatedPlayerLane, playerTiltAngle)
         }
 
         // ── Speed vignette ──────────────────────────────────────────────
@@ -240,7 +287,7 @@ fun GameContent(
             distance      = gameState.distanceTravelled,
             rank          = gameState.rank,
             speed         = gameState.currentSpeed,
-            unit          = speedUnit,
+            unit          = settings.speedUnit,
             isPaused      = gameState.isPaused,
             level         = gameState.level,
             difficulty    = gameState.difficulty,
@@ -284,7 +331,7 @@ fun GameContent(
         }
 
         if (gameState.isPaused && !gameState.isGameOver) PausedOverlay(onTogglePause)
-        if (gameState.isGameOver) GameOverUI(gameState, speedUnit, onRestart, onNavigateBack)
+        if (gameState.isGameOver) GameOverUI(gameState, settings.speedUnit, onRestart, onNextLevel, onNavigateBack)
     }
 }
 
@@ -317,7 +364,14 @@ private fun ThrottleBar(
 // ═══════════════════════════════════════════════════════════════════════════
 //  SCENE DRAWING
 // ═══════════════════════════════════════════════════════════════════════════
-private fun DrawScope.drawScene(state: GameState, tick: Float, glowPulse: Float, speedFraction: Float) {
+private fun DrawScope.drawScene(
+    state: GameState,
+    tick: Float,
+    glowPulse: Float,
+    speedFraction: Float,
+    animatedPlayerLane: Float,
+    playerTiltAngle: Float
+) {
     val laneW    = size.width / GameConstants.LANES
     val viewH    = size.height
     val yScale   = 130f
@@ -327,12 +381,12 @@ private fun DrawScope.drawScene(state: GameState, tick: Float, glowPulse: Float,
     drawRect(Brush.verticalGradient(listOf(Color(0xFF040810), Color(0xFF060A16), C.roadAsphalt), 0f, viewH))
     drawRect(Brush.verticalGradient(listOf(C.laneGlow.copy(alpha = 0.05f * glowPulse), Color.Transparent), 0f, horizonY + 100f), size = size)
     drawRect(Brush.verticalGradient(listOf(Color(0xFF0C1018), Color(0xFF101520), C.roadSurface), horizonY, viewH), Offset(0f, horizonY), Size(size.width, viewH - horizonY))
-    
+
     for (row in 0..14) {
         val ry = horizonY + (row / 14f) * (viewH - horizonY) + (scroll * 0.25f) % ((viewH - horizonY) / 14f)
         drawLine(C.white.copy(alpha = 0.03f), Offset(0f, ry), Offset(size.width, ry), 1f)
     }
-    
+
     val rumbleCount = 14; val rumbleH = (viewH - horizonY) / rumbleCount; val rumbleW = 16.dp.toPx()
     for (i in 0..rumbleCount) {
         val ry = horizonY + i * rumbleH - (scroll % (rumbleH * 2))
@@ -340,7 +394,7 @@ private fun DrawScope.drawScene(state: GameState, tick: Float, glowPulse: Float,
         drawRect(col, Offset(0f, ry), Size(rumbleW, rumbleH))
         drawRect(col, Offset(size.width - rumbleW, ry), Size(rumbleW, rumbleH))
     }
-    
+
     val dashLen = 30.dp.toPx(); val gapLen = 26.dp.toPx(); val period = dashLen + gapLen
     for (i in 0..GameConstants.LANES) {
         val x = i * laneW
@@ -357,7 +411,7 @@ private fun DrawScope.drawScene(state: GameState, tick: Float, glowPulse: Float,
             }
         }
     }
-    
+
     if (speedFraction > 0.2f) {
         val alpha = ((speedFraction - 0.2f) / 0.8f) * 0.55f
         val rng = kotlin.random.Random(99)
@@ -371,74 +425,96 @@ private fun DrawScope.drawScene(state: GameState, tick: Float, glowPulse: Float,
             )
         }
     }
-    
-    state.rivals.forEach { drawCar(it, state.player.y, laneW, viewH, yScale, false, glowPulse) }
+
+    // Draw Rivals (pass their logical lane)
+    state.rivals.forEach { drawCar(it, state.player.y, laneW, viewH, yScale, false, glowPulse, it.lane.toFloat(), 0f) }
+
+    // Draw Obstacles
     state.obstacles.forEach { obs ->
         val screenY = (viewH - 290f) - (obs.y - state.player.y) * yScale
         if (screenY in -220f..viewH + 220f) drawBarricade(Offset(obs.lane * laneW + laneW / 2f, screenY), laneW, tick)
     }
-    drawCar(state.player, state.player.y, laneW, viewH, yScale, true, glowPulse)
-    
-    val px = state.player.lane * laneW + laneW / 2f; val pyBot = viewH - 290f + 170f
+
+    // Draw Player (pass animated lane and tilt angle)
+    drawCar(state.player, state.player.y, laneW, viewH, yScale, true, glowPulse, animatedPlayerLane, playerTiltAngle)
+
+    // Player exhaust glow (tied to animated lane)
+    val px = animatedPlayerLane * laneW + laneW / 2f; val pyBot = viewH - 290f + 170f
     drawRect(Brush.verticalGradient(listOf(Color.Transparent, C.playerGlow.copy(alpha = 0.55f * glowPulse), Color.Transparent), pyBot, pyBot + 90f), Offset(px - 22f, pyBot), Size(44f, 90f))
 }
 
-private fun DrawScope.drawCar(entity: GameEntity, playerY: Float, laneW: Float, viewH: Float, yScale: Float, isPlayer: Boolean, glowPulse: Float) {
+private fun DrawScope.drawCar(
+    entity: GameEntity,
+    playerY: Float,
+    laneW: Float,
+    viewH: Float,
+    yScale: Float,
+    isPlayer: Boolean,
+    glowPulse: Float,
+    visualLane: Float,
+    tiltAngle: Float
+) {
     val relY    = (entity.y - playerY) * yScale
     val screenY = if (isPlayer) viewH - 290f else (viewH - 290f) - relY
     if (screenY !in -380f..viewH + 380f) return
+
     val carW = (laneW * 0.60f).coerceAtMost(125f); val carH = 175f
-    val cx = entity.lane * laneW + laneW / 2f; val left = cx - carW / 2f; val top = screenY - carH / 2f
+    // Calculate the X center point using the animated/visual lane
+    val cx = visualLane * laneW + laneW / 2f; val left = cx - carW / 2f; val top = screenY - carH / 2f
+
     val bodyCol = if (isPlayer) C.playerBody else C.rivalBody
     val accentCol = if (isPlayer) C.playerAccent else C.rivalAccent
     val glowCol = if (isPlayer) C.playerGlow else C.rivalGlow
     val lightCol = if (isPlayer) C.playerLight else C.rivalLight
     val rimCol = if (isPlayer) C.laneGlow else C.rivalLight
 
-    drawRect(Brush.radialGradient(listOf(glowCol.copy(alpha = glowPulse * 0.65f), Color.Transparent), Offset(cx, screenY), carW * 1.6f), Offset(cx - carW * 1.6f, top - 35f), Size(carW * 3.2f, carH + 70f))
-    drawOval(Color.Black.copy(alpha = 0.5f), Offset(left + 8f, top + carH - 8f), Size(carW - 16f, 20f))
-    val wW = carW * 0.23f; val wH = carH * 0.20f
-    listOf(Offset(left - wW * 0.35f, top + carH * 0.11f), Offset(left + carW - wW * 0.65f, top + carH * 0.11f),
-        Offset(left - wW * 0.35f, top + carH * 0.63f), Offset(left + carW - wW * 0.65f, top + carH * 0.63f)).forEach { wp ->
-        drawRoundRect(Color(0xFF181820), wp, Size(wW, wH), CornerRadius(5f))
-        drawOval(rimCol.copy(alpha = 0.75f), Offset(wp.x + wW * 0.18f, wp.y + wH * 0.18f), Size(wW * 0.64f, wH * 0.64f))
-        drawCircle(rimCol.copy(alpha = 0.9f), 3f, Offset(wp.x + wW * 0.5f, wp.y + wH * 0.5f))
+    // Rotate the canvas context based on the calculated tilt angle so the car "steers"
+    rotate(degrees = tiltAngle, pivot = Offset(cx, top + carH / 2f)) {
+        drawRect(Brush.radialGradient(listOf(glowCol.copy(alpha = glowPulse * 0.65f), Color.Transparent), Offset(cx, screenY), carW * 1.6f), Offset(cx - carW * 1.6f, top - 35f), Size(carW * 3.2f, carH + 70f))
+        drawOval(Color.Black.copy(alpha = 0.5f), Offset(left + 8f, top + carH - 8f), Size(carW - 16f, 20f))
+        val wW = carW * 0.23f; val wH = carH * 0.20f
+        listOf(Offset(left - wW * 0.35f, top + carH * 0.11f), Offset(left + carW - wW * 0.65f, top + carH * 0.11f),
+            Offset(left - wW * 0.35f, top + carH * 0.63f), Offset(left + carW - wW * 0.65f, top + carH * 0.63f)).forEach { wp ->
+            drawRoundRect(Color(0xFF181820), wp, Size(wW, wH), CornerRadius(5f))
+            drawOval(rimCol.copy(alpha = 0.75f), Offset(wp.x + wW * 0.18f, wp.y + wH * 0.18f), Size(wW * 0.64f, wH * 0.64f))
+            drawCircle(rimCol.copy(alpha = 0.9f), 3f, Offset(wp.x + wW * 0.5f, wp.y + wH * 0.5f))
+        }
+        val noseL = left + carW * 0.12f; val noseR = left + carW * 0.88f
+        val bodyPath = Path().apply {
+            val r = 14f
+            moveTo(noseL + r, top); lineTo(noseR - r, top); quadraticTo(noseR, top, noseR, top + r)
+            lineTo(left + carW, top + carH * 0.88f); quadraticTo(left + carW, top + carH, left + carW - r, top + carH)
+            lineTo(left + r, top + carH); quadraticTo(left, top + carH, left, top + carH * 0.88f)
+            lineTo(noseL, top + r); quadraticTo(noseL, top, noseL + r, top); close()
+        }
+        drawPath(bodyPath, Brush.verticalGradient(listOf(bodyCol, accentCol), top, top + carH))
+        val cL = left + carW * 0.24f; val cR = left + carW * 0.76f; val cT = top + carH * 0.17f; val cB = top + carH * 0.54f
+        val cockpit = Path().apply {
+            val r = 9f
+            moveTo(cL + r, cT); lineTo(cR - r, cT); quadraticTo(cR, cT, cR, cT + r)
+            lineTo(cR - 5f, cB - r); quadraticTo(cR - 5f, cB, cR - 5f - r, cB)
+            lineTo(cL + 5f + r, cB); quadraticTo(cL + 5f, cB, cL + 5f, cB - r)
+            lineTo(cL, cT + r); quadraticTo(cL, cT, cL + r, cT); close()
+        }
+        drawPath(cockpit, Color(0xFF07090F).copy(alpha = 0.88f))
+        drawPath(cockpit, Brush.verticalGradient(listOf(C.white.copy(alpha = 0.17f), Color.Transparent), cT, cT + (cB - cT) * 0.4f))
+        drawCircle(bodyCol.copy(alpha = 0.45f), (cR - cL) * 0.21f, Offset((cL + cR) / 2f, (cT + cB) / 2f + 5f))
+        drawRect(accentCol.copy(alpha = 0.9f), Offset(left - 5f, top + 2f), Size(carW + 10f, 11f))
+        drawLine(accentCol.copy(alpha = 0.5f), Offset(left - 5f, top + 7f), Offset(left + carW + 5f, top + 7f), 2f)
+        drawRect(accentCol.copy(alpha = 0.9f), Offset(left - 7f, top + carH * 0.84f), Size(carW + 14f, 13f))
+        drawRect(accentCol, Offset(left - 7f, top + carH * 0.78f), Size(9f, 22f))
+        drawRect(accentCol, Offset(left + carW - 2f, top + carH * 0.78f), Size(9f, 22f))
+        drawRect(C.white.copy(alpha = if (isPlayer) 0.22f else 0.12f), Offset(cx - 4f, top + carH * 0.04f), Size(8f, carH * 0.92f))
+        val hlY = top + carH * 0.025f; val tlY = top + carH * 0.88f
+        fun light(lx: Float, ly: Float, col: Color) {
+            drawRoundRect(col.copy(alpha = 0.9f), Offset(lx - 11f, ly - 5f), Size(22f, 10f), CornerRadius(4f))
+            drawCircle(col.copy(alpha = 0.3f * glowPulse), 16f, Offset(lx, ly))
+        }
+        light(left + carW * 0.22f, hlY + 5f, lightCol); light(left + carW * 0.78f, hlY + 5f, lightCol)
+        val tailCol = if (isPlayer) Color(0xFFFF2020) else Color(0xFFFF4000)
+        light(left + carW * 0.22f, tlY + 5f, tailCol); light(left + carW * 0.78f, tlY + 5f, tailCol)
+        drawRect(Brush.verticalGradient(listOf(C.white.copy(alpha = 0.14f), Color.Transparent), top + carH * 0.04f, top + carH * 0.24f), Offset(left + carW * 0.12f, top + carH * 0.04f), Size(carW * 0.76f, carH * 0.2f))
     }
-    val noseL = left + carW * 0.12f; val noseR = left + carW * 0.88f
-    val bodyPath = Path().apply {
-        val r = 14f
-        moveTo(noseL + r, top); lineTo(noseR - r, top); quadraticTo(noseR, top, noseR, top + r)
-        lineTo(left + carW, top + carH * 0.88f); quadraticTo(left + carW, top + carH, left + carW - r, top + carH)
-        lineTo(left + r, top + carH); quadraticTo(left, top + carH, left, top + carH * 0.88f)
-        lineTo(noseL, top + r); quadraticTo(noseL, top, noseL + r, top); close()
-    }
-    drawPath(bodyPath, Brush.verticalGradient(listOf(bodyCol, accentCol), top, top + carH))
-    val cL = left + carW * 0.24f; val cR = left + carW * 0.76f; val cT = top + carH * 0.17f; val cB = top + carH * 0.54f
-    val cockpit = Path().apply {
-        val r = 9f
-        moveTo(cL + r, cT); lineTo(cR - r, cT); quadraticTo(cR, cT, cR, cT + r)
-        lineTo(cR - 5f, cB - r); quadraticTo(cR - 5f, cB, cR - 5f - r, cB)
-        lineTo(cL + 5f + r, cB); quadraticTo(cL + 5f, cB, cL + 5f, cB - r)
-        lineTo(cL, cT + r); quadraticTo(cL, cT, cL + r, cT); close()
-    }
-    drawPath(cockpit, Color(0xFF07090F).copy(alpha = 0.88f))
-    drawPath(cockpit, Brush.verticalGradient(listOf(C.white.copy(alpha = 0.17f), Color.Transparent), cT, cT + (cB - cT) * 0.4f))
-    drawCircle(bodyCol.copy(alpha = 0.45f), (cR - cL) * 0.21f, Offset((cL + cR) / 2f, (cT + cB) / 2f + 5f))
-    drawRect(accentCol.copy(alpha = 0.9f), Offset(left - 5f, top + 2f), Size(carW + 10f, 11f))
-    drawLine(accentCol.copy(alpha = 0.5f), Offset(left - 5f, top + 7f), Offset(left + carW + 5f, top + 7f), 2f)
-    drawRect(accentCol.copy(alpha = 0.9f), Offset(left - 7f, top + carH * 0.84f), Size(carW + 14f, 13f))
-    drawRect(accentCol, Offset(left - 7f, top + carH * 0.78f), Size(9f, 22f))
-    drawRect(accentCol, Offset(left + carW - 2f, top + carH * 0.78f), Size(9f, 22f))
-    drawRect(C.white.copy(alpha = if (isPlayer) 0.22f else 0.12f), Offset(cx - 4f, top + carH * 0.04f), Size(8f, carH * 0.92f))
-    val hlY = top + carH * 0.025f; val tlY = top + carH * 0.88f
-    fun light(lx: Float, ly: Float, col: Color) {
-        drawRoundRect(col.copy(alpha = 0.9f), Offset(lx - 11f, ly - 5f), Size(22f, 10f), CornerRadius(4f))
-        drawCircle(col.copy(alpha = 0.3f * glowPulse), 16f, Offset(lx, ly))
-    }
-    light(left + carW * 0.22f, hlY + 5f, lightCol); light(left + carW * 0.78f, hlY + 5f, lightCol)
-    val tailCol = if (isPlayer) Color(0xFFFF2020) else Color(0xFFFF4000)
-    light(left + carW * 0.22f, tlY + 5f, tailCol); light(left + carW * 0.78f, tlY + 5f, tailCol)
-    drawRect(Brush.verticalGradient(listOf(C.white.copy(alpha = 0.14f), Color.Transparent), top + carH * 0.04f, top + carH * 0.24f), Offset(left + carW * 0.12f, top + carH * 0.04f), Size(carW * 0.76f, carH * 0.2f))
 }
 
 private fun DrawScope.drawBarricade(center: Offset, laneW: Float, tick: Float) {
@@ -496,8 +572,9 @@ private fun PausedOverlay(onResume: () -> Unit) {
 }
 
 @Composable
-fun GameOverUI(gameState: GameState, speedUnit: SpeedUnit, onRestart: () -> Unit, onNavigateBack: () -> Unit) {
+fun GameOverUI(gameState: GameState, speedUnit: SpeedUnit, onRestart: () -> Unit, onNextLevel: () -> Unit, onNavigateBack: () -> Unit) {
     val isVictory = gameState.isVictory; val accent = if (isVictory) C.green else Color(0xFFFF2D55)
+    val hasNextLevel = isVictory && gameState.level < Levels.all.size
     val diffCol = when (gameState.difficulty) { Difficulty.EASY -> Color(0xFF00E676); Difficulty.MEDIUM -> Color(0xFFFFD600); Difficulty.HARD -> Color(0xFFFF2D55) }
     Box(Modifier.fillMaxSize().background(C.overlayDark), Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) { drawCircle(accent.copy(alpha = 0.06f), size.width * 0.85f, Offset(size.width / 2f, size.height / 2f)) }
@@ -506,7 +583,22 @@ fun GameOverUI(gameState: GameState, speedUnit: SpeedUnit, onRestart: () -> Unit
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { Text("Level ${gameState.level}", color = C.white.copy(alpha = 0.6f), fontSize = 13.sp); Box(Modifier.clip(RoundedCornerShape(6.dp)).background(diffCol.copy(alpha = 0.15f)).padding(horizontal = 8.dp, vertical = 2.dp)) { Text(gameState.difficulty.label, color = diffCol, fontSize = 11.sp, fontWeight = FontWeight.Bold) } }
             Spacer(Modifier.height(4.dp)); Text(if (isVictory) "Race complete — well driven!" else "Back to the pits…", color = C.white.copy(alpha = 0.4f), fontSize = 13.sp); Spacer(Modifier.height(22.dp))
             StatRow("Distance", "${gameState.distanceTravelled.toInt()} m", C.yellow); StatRow("Top Speed", "${gameState.peakSpeed.toDisplaySpeed(speedUnit)} ${speedUnit.label()}", C.blue); StatRow("Avg Speed", "${gameState.avgSpeed.toDisplaySpeed(speedUnit)} ${speedUnit.label()}", C.laneGlow); StatRow("Finish Rank", "${gameState.rank} / 6", C.green)
-            Spacer(Modifier.height(28.dp)); Button(onRestart, colors = ButtonDefaults.buttonColors(containerColor = accent), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("RETRY", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 15.sp, letterSpacing = 2.sp) }
+            Spacer(Modifier.height(28.dp))
+
+            if (hasNextLevel) {
+                Button(onNextLevel, colors = ButtonDefaults.buttonColors(containerColor = C.laneGlow), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                    Text("NEXT LEVEL", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 15.sp, letterSpacing = 2.sp)
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onRestart, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, C.white.copy(alpha = 0.2f)), modifier = Modifier.fillMaxWidth().height(50.dp)) {
+                    Text("RETRY", color = C.white.copy(alpha = 0.65f), fontSize = 13.sp, letterSpacing = 1.5.sp)
+                }
+            } else {
+                Button(onRestart, colors = ButtonDefaults.buttonColors(containerColor = accent), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                    Text("RETRY", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 15.sp, letterSpacing = 2.sp)
+                }
+            }
+
             Spacer(Modifier.height(10.dp)); OutlinedButton(onNavigateBack, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, C.white.copy(alpha = 0.2f)), modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("MAIN MENU", color = C.white.copy(alpha = 0.65f), fontSize = 13.sp, letterSpacing = 1.5.sp) }
         }
     }
@@ -521,4 +613,4 @@ private fun StatRow(label: String, value: String, accent: Color) {
 
 @Preview(showBackground = true)
 @Composable
-fun GamePreview() { LaneRushTheme { GameContent(gameState = GameState(distanceTravelled = 1200f, currentSpeed = 1.2f, rank = 3, level = 5, difficulty = Difficulty.HARD, throttleOn = true), speedUnit = SpeedUnit.KMH, onThrottleOn = {}, onThrottleOff = {}, onSwipe = {}, onTap = {}, onTogglePause = {}, onRestart = {}, onNavigateBack = {}) } }
+fun GamePreview() { LaneRushTheme { GameContent(gameState = GameState(distanceTravelled = 1200f, currentSpeed = 1.2f, rank = 3, level = 5, difficulty = Difficulty.HARD, throttleOn = true), settings = UserSettings(), onThrottleOn = {}, onThrottleOff = {}, onSwipe = {}, onTap = {}, onTogglePause = {}, onRestart = {}, onNextLevel = {}, onNavigateBack = {}) } }

@@ -7,9 +7,10 @@ import kotlin.random.Random
 
 /**
  * Throttle / brake physics:
- *   • Finger held down  → throttle ON  → speed climbs toward maxSpeed
- *   • Finger released   → throttle OFF → speed falls toward minSpeed (coasting/braking)
- *   • Lane changes (swipe or tap) work independently of throttle state.
+ * • Finger held down  → throttle ON  → speed climbs toward maxSpeed
+ * • Finger released   → throttle OFF → speed falls toward minSpeed (coasting/braking)
+ * • Lane changes (swipe or tap) work independently of throttle state but apply a slight speed penalty.
+ * • Slipstreaming behind rivals temporarily increases max speed and acceleration.
  */
 class GameEngine(private val scope: CoroutineScope) {
 
@@ -44,25 +45,43 @@ class GameEngine(private val scope: CoroutineScope) {
 
     fun togglePause() = _gameState.update { it.copy(isPaused = !it.isPaused) }
 
+    fun pause() {
+        if (!_gameState.value.isPaused) {
+            _gameState.update { it.copy(isPaused = true) }
+        }
+    }
+
     fun setThrottle(on: Boolean) {
         throttleOn = on
         _gameState.update { it.copy(throttleOn = on) }
     }
 
     fun onSwipe(direction: SwipeDirection) {
-        if (_gameState.value.isGameOver || _gameState.value.isPaused) return
-        val lane = _gameState.value.player.lane
+        val state = _gameState.value
+        if (state.isGameOver || state.isPaused) return
+        val lane = state.player.lane
         val newLane = when (direction) {
             SwipeDirection.LEFT  -> (lane - 1).coerceAtLeast(0)
             SwipeDirection.RIGHT -> (lane + 1).coerceAtMost(GameConstants.LANES - 1)
         }
-        _gameState.update { it.copy(player = it.player.copy(lane = newLane)) }
+
+        if (lane != newLane) {
+            // Speed Scrubbing: Lose 4% of speed when swerving, bounded by minSpeed
+            val minSpd = state.difficulty.minSpeed
+            val scrubbedSpeed = (state.currentSpeed * 0.96f).coerceAtLeast(minSpd)
+            _gameState.update { it.copy(player = it.player.copy(lane = newLane), currentSpeed = scrubbedSpeed) }
+        }
     }
 
     fun onTap(lane: Int) {
-        if (_gameState.value.isGameOver || _gameState.value.isPaused) return
-        if (lane in 0 until GameConstants.LANES)
-            _gameState.update { it.copy(player = it.player.copy(lane = lane)) }
+        val state = _gameState.value
+        if (state.isGameOver || state.isPaused) return
+        if (lane in 0 until GameConstants.LANES && lane != state.player.lane) {
+            // Speed Scrubbing on tap as well
+            val minSpd = state.difficulty.minSpeed
+            val scrubbedSpeed = (state.currentSpeed * 0.96f).coerceAtLeast(minSpd)
+            _gameState.update { it.copy(player = it.player.copy(lane = lane), currentSpeed = scrubbedSpeed) }
+        }
     }
 
     private fun updateGame() {
@@ -72,11 +91,33 @@ class GameEngine(private val scope: CoroutineScope) {
         val cfg  = Levels.get(state.level)
         val throttle = throttleOn
 
+        // --- PHYSICS IMPROVEMENTS START ---
+
+        // 1. Slipstreaming (Drafting) Check
+        // If a rival is in the same lane and within 20 units ahead, engage draft
+        val isDrafting = state.rivals.any {
+            it.lane == state.player.lane && it.y > state.player.y && (it.y - state.player.y) < 20f
+        }
+
+        // Boost top speed by 15% if drafting
+        val currentMaxSpeed = if (isDrafting) diff.maxSpeed * 1.15f else diff.maxSpeed
+
         val newSpeed = if (throttle) {
-            (state.currentSpeed + diff.accelerationRate).coerceAtMost(diff.maxSpeed)
+            // 2. Non-Linear Acceleration (Drag)
+            val speedRatio = state.currentSpeed / currentMaxSpeed
+            // As speed approaches max, acceleration curve flattens. Coerce to at least 0.05 so it doesn't completely stall out.
+            val dragFactor = (1f - speedRatio).coerceAtLeast(0.05f)
+            val dynamicAccel = diff.accelerationRate * dragFactor
+
+            // Give a slight extra kick to acceleration if slipstreaming
+            val finalAccel = if (isDrafting) dynamicAccel * 1.3f else dynamicAccel
+
+            (state.currentSpeed + finalAccel).coerceAtMost(currentMaxSpeed)
         } else {
             (state.currentSpeed - diff.brakeRate).coerceAtLeast(diff.minSpeed)
         }
+
+        // --- PHYSICS IMPROVEMENTS END ---
 
         val newTicks    = state.ticks + 1
         val newDistance = state.distanceTravelled + newSpeed

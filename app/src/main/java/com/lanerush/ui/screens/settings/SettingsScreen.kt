@@ -57,6 +57,7 @@ fun SettingsScreen(
         onUnitChange   = { viewModel.updateSpeedUnit(it) },
         onSoundToggle  = { viewModel.updateSoundEnabled(it) },
         onVolumeChange = { viewModel.updateSoundVolume(it) },
+        onSensitivityChange = { viewModel.updateSwipeSensitivity(it) },
         onNavigateBack = onNavigateBack,
         onSignOut      = onSignOut
     )
@@ -73,6 +74,7 @@ fun SettingsContent(
     onUnitChange: (SpeedUnit) -> Unit,
     onSoundToggle: (Boolean) -> Unit,
     onVolumeChange: (Float) -> Unit,
+    onSensitivityChange: (Float) -> Unit,
     onNavigateBack: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -183,6 +185,33 @@ fun SettingsContent(
                             thumbColor = colorScheme.primary,
                             activeTrackColor = colorScheme.primary
                         )
+                    )
+                }
+            }
+
+            // ── CONTROLS ──────────────────────────────────────────────────
+            SettingsSection(
+                icon = Icons.Default.SettingsInputComponent,
+                title = "Controls",
+                accent = colorScheme.primary
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Swipe Sensitivity", color = colorScheme.onSurface, fontSize = 14.sp)
+                        Text("${(settings.swipeSensitivity * 100).toInt()}%", color = colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    }
+                    Slider(
+                        value = settings.swipeSensitivity,
+                        onValueChange = onSensitivityChange,
+                        colors = SliderDefaults.colors(
+                            thumbColor = colorScheme.primary,
+                            activeTrackColor = colorScheme.primary
+                        )
+                    )
+                    Text(
+                        "Adjust how far you need to swipe to change lanes.",
+                        fontSize = 11.sp,
+                        color = colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -553,6 +582,7 @@ fun SettingsPreview() {
             onUnitChange   = {},
             onSoundToggle  = {},
             onVolumeChange = {},
+            onSensitivityChange = {},
             onNavigateBack = {},
             onSignOut      = {}
         )

@@ -17,6 +17,12 @@ Lane Rush is a high-performance, production-ready Android game built with **Kotl
     - **Firestore**: Real-time storage for user profiles and global high scores.
 - **Modern UI**: Fully declarative HUD and menus using Jetpack Compose and Material3.
 
+## 📸 Screenshots
+
+|                                Main Menu                                 |                                Level Selection                                |                             High-Speed Gameplay                              |                             Settings & Controls                              |
+|:------------------------------------------------------------------------:|:-----------------------------------------------------------------------------:|:----------------------------------------------------------------------------:|:----------------------------------------------------------------------------:|
+| <img src="app/src/main/res/raw/screenshots/home_screen.jpg" width="200"> | <img src="app/src/main/res/raw/screenshots/gamesetup_screen.jpg" width="200"> | <img src="app/src/main/res/raw/screenshots/gameplay_Screen.jpg" width="200"> | <img src="app/src/main/res/raw/screenshots/settings_screen.jpg" width="200"> |
+
 ## 🕹️ How to Play
 
 ### Controls

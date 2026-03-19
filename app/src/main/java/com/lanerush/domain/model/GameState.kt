@@ -94,6 +94,7 @@ data class GameState(
     val isGameOver: Boolean         = false,
     val isPaused: Boolean           = false,
     val isVictory: Boolean          = false,
+    val isDrafting: Boolean         = false,
     val message: String             = "",
     val level: Int                  = 1,
     val difficulty: Difficulty      = Difficulty.MEDIUM,

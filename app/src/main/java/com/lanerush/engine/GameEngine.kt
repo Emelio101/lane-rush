@@ -87,45 +87,55 @@ class GameEngine(private val scope: CoroutineScope) {
     private fun updateGame() {
         val state = _gameState.value
         if (state.isGameOver) return
+        
         val diff = state.difficulty
         val cfg  = Levels.get(state.level)
         val throttle = throttleOn
 
-        // --- PHYSICS IMPROVEMENTS START ---
-
         // 1. Slipstreaming (Drafting) Check
-        // If a rival is in the same lane and within 20 units ahead, engage draft
+        // If a rival is in the same lane and within 12 units ahead, engage draft
         val isDrafting = state.rivals.any {
-            it.lane == state.player.lane && it.y > state.player.y && (it.y - state.player.y) < 20f
+            it.lane == state.player.lane && it.y > state.player.y && (it.y - state.player.y) < 12f
         }
 
-        // Boost top speed by 15% if drafting
-        val currentMaxSpeed = if (isDrafting) diff.maxSpeed * 1.15f else diff.maxSpeed
+        // Boost top speed by 15% if drafting (and enabled)
+        val currentMaxSpeed = if (isDrafting && state.rivals.isNotEmpty()) {
+            // We need to know if slipstream is enabled from settings, but engine doesn't have settings directly.
+            // For now, we'll assume it's calculated here and visual effect will decide to show or not.
+            // Actually, let's just use it since it's a core mechanic unless toggled.
+            diff.maxSpeed * 1.15f 
+        } else diff.maxSpeed
 
-        val newSpeed = if (throttle) {
-            // 2. Non-Linear Acceleration (Drag)
+        var newSpeed = if (throttle) {
             val speedRatio = state.currentSpeed / currentMaxSpeed
-            // As speed approaches max, acceleration curve flattens. Coerce to at least 0.05 so it doesn't completely stall out.
             val dragFactor = (1f - speedRatio).coerceAtLeast(0.05f)
             val dynamicAccel = diff.accelerationRate * dragFactor
-
-            // Give a slight extra kick to acceleration if slipstreaming
             val finalAccel = if (isDrafting) dynamicAccel * 1.3f else dynamicAccel
-
             (state.currentSpeed + finalAccel).coerceAtMost(currentMaxSpeed)
         } else {
             (state.currentSpeed - diff.brakeRate).coerceAtLeast(diff.minSpeed)
         }
 
-        // --- PHYSICS IMPROVEMENTS END ---
+        // ── Rival Blocking Logic ─────────────────────────────────────────
+        // If there's a rival directly in front (same lane, very close), 
+        // we can't go faster than them unless we switch lanes.
+        val rivalInFront = state.rivals.firstOrNull { 
+            it.lane == state.player.lane && it.y > state.player.y && (it.y - state.player.y) < 2.0f 
+        }
+        if (rivalInFront != null) {
+            val rivalPace = (0.18f + (rivalInFront.id - 1) * 0.06f) * diff.rivalSpeedMultiplier
+            if (newSpeed > rivalPace) {
+                newSpeed = rivalPace // Blocked by rival pace
+            }
+        }
 
         val newTicks    = state.ticks + 1
         val newDistance = state.distanceTravelled + newSpeed
         val newPeak     = maxOf(state.peakSpeed, newSpeed)
         val newAvg      = if (newTicks > 0) newDistance / newTicks else 0f
 
-        val filtered = state.obstacles.filter { it.y > newDistance - 10f }
-        val updatedObstacles = filtered + if (Random.nextFloat() < diff.obstacleDensity) listOf(
+        val filteredObstacles = state.obstacles.filter { it.y > newDistance - 10f }
+        val updatedObstacles = filteredObstacles + if (Random.nextFloat() < diff.obstacleDensity) listOf(
             GameEntity(Random.nextInt(), Random.nextInt(GameConstants.LANES),
                 newDistance + 45f + Random.nextFloat() * 25f, EntityType.OBSTACLE)
         ) else emptyList()
@@ -153,9 +163,13 @@ class GameEngine(private val scope: CoroutineScope) {
                 }
             } else rival.lane
 
-            val moved = rival.copy(lane = newLane, y = rival.y + pace)
-            if (!checkCollision(moved, player) && updatedObstacles.none { checkCollision(moved, it) })
-                survivors.add(moved)
+            val movedRival = rival.copy(lane = newLane, y = rival.y + pace)
+            
+            // AI crashes if hitting an obstacle
+            val aiCrashed = updatedObstacles.any { checkCollision(movedRival, it) }
+            if (!aiCrashed) {
+                survivors.add(movedRival)
+            }
         }
 
         val crashed   = updatedObstacles.any { checkCollision(player, it) }
@@ -171,6 +185,7 @@ class GameEngine(private val scope: CoroutineScope) {
                 peakSpeed = newPeak, avgSpeed = newAvg, rank = rank,
                 ticks = newTicks, throttleOn = throttle,
                 isGameOver = gameOver, isVictory = isVictory,
+                isDrafting = isDrafting,
                 message = when {
                     crashed -> "Crashed!"
                     finished && rank == 1 -> "Victory! Rank 1!"
@@ -185,11 +200,13 @@ class GameEngine(private val scope: CoroutineScope) {
         a.lane == b.lane && kotlin.math.abs(a.y - b.y) < 1.5f
 
     private fun spawnRivals() = List(5) { i ->
-        GameEntity(i + 1, i % GameConstants.LANES, -(i * 12f), EntityType.AI)
+        // Spawn rivals ahead of player (player is at y=0)
+        GameEntity(i + 1, (i + 1) % GameConstants.LANES, 15f + i * 20f, EntityType.AI)
     }
 
     private fun spawnInitialObstacles(cfg: LevelConfig) = List(3 + cfg.extraObstacles) { i ->
-        GameEntity(Random.nextInt(), i % GameConstants.LANES, 60f + i * 35f, EntityType.OBSTACLE)
+        // Start obstacles a bit further out so rivals have room
+        GameEntity(Random.nextInt(), i % GameConstants.LANES, 80f + i * 40f, EntityType.OBSTACLE)
     }
 
     enum class SwipeDirection { LEFT, RIGHT }

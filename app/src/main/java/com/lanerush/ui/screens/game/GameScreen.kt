@@ -96,6 +96,10 @@ fun GameScreen(
     val context       = LocalContext.current
     val soundManager  = remember { SoundManager(context) }
 
+    // ── Start the game loop when this screen enters ───────────────
+    LaunchedEffect(Unit) { 
+        viewModel.startGame() 
+    }
 
     // ── Audio Management & Settings Sync ────────────────────────────
     LaunchedEffect(
@@ -265,9 +269,8 @@ fun GameContent(
                     }
                 }
         ) {
-            drawScene(gameState, animTick, glowPulse, speedFraction, animatedPlayerLane, playerTiltAngle)
+            drawScene(gameState, animTick, glowPulse, speedFraction, animatedPlayerLane, playerTiltAngle, settings)
         }
-
         // ── Speed vignette ──────────────────────────────────────────────
         if (speedFraction > 0.3f) {
             Canvas(Modifier.fillMaxSize()) {
@@ -284,13 +287,9 @@ fun GameContent(
 
         // ── HUD ───────────────────────────────────────────────────────────
         HUDOverlay(
-            distance      = gameState.distanceTravelled,
-            rank          = gameState.rank,
-            speed         = gameState.currentSpeed,
+            state         = gameState,
             unit          = settings.speedUnit,
-            isPaused      = gameState.isPaused,
-            level         = gameState.level,
-            difficulty    = gameState.difficulty,
+            settings      = settings,
             onTogglePause = onTogglePause
         )
 
@@ -370,7 +369,8 @@ private fun DrawScope.drawScene(
     glowPulse: Float,
     speedFraction: Float,
     animatedPlayerLane: Float,
-    playerTiltAngle: Float
+    playerTiltAngle: Float,
+    settings: UserSettings
 ) {
     val laneW    = size.width / GameConstants.LANES
     val viewH    = size.height
@@ -441,6 +441,60 @@ private fun DrawScope.drawScene(
     // Player exhaust glow (tied to animated lane)
     val px = animatedPlayerLane * laneW + laneW / 2f; val pyBot = viewH - 290f + 170f
     drawRect(Brush.verticalGradient(listOf(Color.Transparent, C.playerGlow.copy(alpha = 0.55f * glowPulse), Color.Transparent), pyBot, pyBot + 90f), Offset(px - 22f, pyBot), Size(44f, 90f))
+
+    // ── SLIPSTREAM VISUAL EFFECT ──────────────────────────────────────
+    if (state.isDrafting && settings.isSlipstreamEnabled) {
+        val carH = 175f
+        val carCenterY = viewH - 290f
+        val carTop = carCenterY - carH / 2f
+        
+        // Use nanoseconds for ultra-smooth high-speed flicker
+        val timeNano = System.nanoTime()
+        val draftRng = kotlin.random.Random(timeNano / 1_000_000) 
+        
+        repeat(30) {
+            // Randomly pick side or center streaks
+            val isSide = draftRng.nextFloat() > 0.3f
+            val sideOffset = if (isSide) (laneW * 0.42f) else (laneW * 0.15f)
+            val lineX = px + (if (draftRng.nextBoolean()) sideOffset else -sideOffset) + (draftRng.nextFloat() * 12f - 6f)
+            
+            // Very fast downward "warp speed" flow
+            val flowSpeed = 1500f // pixels per second-ish
+            val flowTick = (timeNano / 1_000_000_000f) % 1f
+            val yOffset = (flowTick * flowSpeed + draftRng.nextFloat() * 1000f) % 1000f
+            
+            // Start lines well ahead of the car and blow past it
+            val startY = carTop - 600f + yOffset
+            val lineLen = 100f + draftRng.nextFloat() * 200f
+            
+            if (startY < viewH && startY + lineLen > 0) {
+                val alpha = (0.4f + draftRng.nextFloat() * 0.6f) * glowPulse
+                drawLine(
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            Color.Transparent, 
+                            Color.Cyan.copy(alpha = alpha), 
+                            Color.Transparent
+                        )
+                    ),
+                    start = Offset(lineX, startY),
+                    end = Offset(lineX, startY + lineLen),
+                    strokeWidth = 3.5f.dp.toPx()
+                )
+            }
+        }
+        
+        // Add some "speed particles" flying straight at the screen
+        repeat(8) {
+            val pX = px + (draftRng.nextFloat() - 0.5f) * laneW * 1.5f
+            val pY = (carTop + (draftRng.nextFloat() * 400f - 200f))
+            drawCircle(
+                color = Color.White.copy(alpha = 0.5f * glowPulse),
+                radius = 2f.dp.toPx(),
+                center = Offset(pX, pY)
+            )
+        }
+    }
 }
 
 private fun DrawScope.drawCar(
@@ -535,18 +589,41 @@ private fun DrawScope.drawBarricade(center: Offset, laneW: Float, tick: Float) {
 }
 
 @Composable
-fun HUDOverlay(distance: Float, rank: Int, speed: Float, unit: SpeedUnit, isPaused: Boolean, level: Int, difficulty: Difficulty, onTogglePause: () -> Unit) {
-    val displaySpeed = speed.toDisplaySpeed(unit)
-    val diffColor = when (difficulty) { Difficulty.EASY -> Color(0xFF00E676); Difficulty.MEDIUM -> Color(0xFFFFD600); Difficulty.HARD -> Color(0xFFFF2D55) }
-    Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp).pointerInput(Unit) { detectTapGestures { } }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            HUDCard(Icons.AutoMirrored.Filled.TrendingUp, "RANK", "$rank/6", C.green); HUDCard(Icons.Default.Timer, "DIST", "${distance.toInt()}m", C.yellow); HUDCard(Icons.Default.Speed, "SPEED", "$displaySpeed ${unit.label()}", C.blue)
-            Box(Modifier.clip(RoundedCornerShape(13.dp)).background(C.hudBg).drawBehind { drawRoundRect(diffColor.copy(alpha = 0.4f), cornerRadius = CornerRadius(13.dp.toPx()), style = Stroke(1.dp.toPx())) }.padding(horizontal = 7.dp, vertical = 6.dp), Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("LVL $level", color = diffColor, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp); Text(difficulty.label.uppercase(), color = C.white.copy(alpha = 0.55f), fontSize = 7.sp, letterSpacing = 0.8.sp) }
+fun HUDOverlay(state: GameState, unit: SpeedUnit, settings: UserSettings, onTogglePause: () -> Unit) {
+    val displaySpeed = state.currentSpeed.toDisplaySpeed(unit)
+    val diffColor = when (state.difficulty) { Difficulty.EASY -> Color(0xFF00E676); Difficulty.MEDIUM -> Color(0xFFFFD600); Difficulty.HARD -> Color(0xFFFF2D55) }
+    
+    Column(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures { } }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                HUDCard(Icons.AutoMirrored.Filled.TrendingUp, "RANK", "${state.rank}/6", C.green)
+                HUDCard(Icons.Default.Timer, "DIST", "${state.distanceTravelled.toInt()}m", C.yellow)
+                HUDCard(Icons.Default.Speed, "SPEED", "$displaySpeed ${unit.label()}", C.blue)
+                Box(Modifier.clip(RoundedCornerShape(13.dp)).background(C.hudBg).drawBehind { drawRoundRect(diffColor.copy(alpha = 0.4f), cornerRadius = CornerRadius(13.dp.toPx()), style = Stroke(1.dp.toPx())) }.padding(horizontal = 7.dp, vertical = 6.dp), Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("LVL ${state.level}", color = diffColor, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp); Text(state.difficulty.label.uppercase(), color = C.white.copy(alpha = 0.55f), fontSize = 7.sp, letterSpacing = 0.8.sp) }
+                }
+            }
+            Box(Modifier.size(46.dp).clip(RoundedCornerShape(13.dp)).background(C.hudBg).drawBehind { drawRoundRect(C.hudBorder.copy(alpha = 0.3f), cornerRadius = CornerRadius(13.dp.toPx()), style = Stroke(1.dp.toPx())) }, Alignment.Center) {
+                IconButton(onClick = onTogglePause, modifier = Modifier.fillMaxSize()) { Icon(if (state.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause, if (state.isPaused) "Resume" else "Pause", tint = C.white, modifier = Modifier.size(20.dp)) }
             }
         }
-        Box(Modifier.size(46.dp).clip(RoundedCornerShape(13.dp)).background(C.hudBg).drawBehind { drawRoundRect(C.hudBorder.copy(alpha = 0.3f), cornerRadius = CornerRadius(13.dp.toPx()), style = Stroke(1.dp.toPx())) }, Alignment.Center) {
-            IconButton(onClick = onTogglePause, modifier = Modifier.fillMaxSize()) { Icon(if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause, if (isPaused) "Resume" else "Pause", tint = C.white, modifier = Modifier.size(20.dp)) }
+
+        // ── Drafting Indicator ──────────────────────────────────────
+        if (state.isDrafting && settings.isSlipstreamEnabled) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                color = C.laneGlow.copy(alpha = 0.15f),
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .clip(RoundedCornerShape(8.dp))
+                    .drawBehind { drawRoundRect(C.laneGlow.copy(alpha = 0.5f), style = Stroke(1.dp.toPx()), cornerRadius = CornerRadius(8.dp.toPx())) }
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.TrendingUp, null, tint = C.laneGlow, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Slipstream - SPEED BOOST ACTIVE", color = C.laneGlow, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                }
+            }
         }
     }
 }

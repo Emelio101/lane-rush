@@ -33,8 +33,12 @@ jobs:
       - name: 📝 Reconstruct local.properties
         run: echo "GOOGLE_WEB_CLIENT_ID=${{ secrets.GOOGLE_WEB_CLIENT_ID }}" > local.properties
 
-      - name: 🔨 Build Debug APK
-        run: ./gradlew assembleDebug
+      - name: 🔑 Set up Signing Key
+        run: |
+          echo "${{ secrets.DEBUG_KEYSTORE }}" | base64 --decode > app/debug.keystore
+
+      - name: 🔨 Build Signed APK
+        run: ./gradlew assembleDebug -Pandroid.injected.signing.store.file=debug.keystore -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
 
       - name: 🚀 Create GitHub Release & Upload APK
         uses: softprops/action-gh-release@v2

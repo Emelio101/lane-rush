@@ -58,6 +58,7 @@ fun SettingsScreen(
         onSoundToggle  = { viewModel.updateSoundEnabled(it) },
         onVolumeChange = { viewModel.updateSoundVolume(it) },
         onSensitivityChange = { viewModel.updateSwipeSensitivity(it) },
+        onSlipstreamToggle = { viewModel.updateSlipstreamEnabled(it) },
         onNavigateBack = onNavigateBack,
         onSignOut      = onSignOut
     )
@@ -75,6 +76,7 @@ fun SettingsContent(
     onSoundToggle: (Boolean) -> Unit,
     onVolumeChange: (Float) -> Unit,
     onSensitivityChange: (Float) -> Unit,
+    onSlipstreamToggle: (Boolean) -> Unit,
     onNavigateBack: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -212,6 +214,29 @@ fun SettingsContent(
                         "Adjust how far you need to swipe to change lanes.",
                         fontSize = 11.sp,
                         color = colorScheme.onSurfaceVariant
+                    )
+                }
+                
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = colorScheme.onSurface.copy(alpha = 0.08f))
+                Spacer(Modifier.height(16.dp))
+
+                Row(
+                    modifier          = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Slipstream", color = colorScheme.onSurface, fontSize = 14.sp)
+                        Text("Get a speed boost when tailing rivals.", fontSize = 11.sp, color = colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = settings.isSlipstreamEnabled,
+                        onCheckedChange = onSlipstreamToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colorScheme.primary,
+                            checkedTrackColor = colorScheme.primary.copy(alpha = 0.3f)
+                        )
                     )
                 }
             }
@@ -583,6 +608,7 @@ fun SettingsPreview() {
             onSoundToggle  = {},
             onVolumeChange = {},
             onSensitivityChange = {},
+            onSlipstreamToggle = {},
             onNavigateBack = {},
             onSignOut      = {}
         )

@@ -23,6 +23,7 @@ class SettingsRepository(private val context: Context) {
         val SOUND_ENABLED = booleanPreferencesKey("sound_enabled")
         val SOUND_VOLUME = floatPreferencesKey("sound_volume")
         val SWIPE_SENSITIVITY = floatPreferencesKey("swipe_sensitivity")
+        val SLIPSTREAM_ENABLED = booleanPreferencesKey("slipstream_enabled")
         val MAX_UNLOCKED_LEVEL = intPreferencesKey("max_unlocked_level")
     }
 
@@ -33,6 +34,7 @@ class SettingsRepository(private val context: Context) {
             isSoundEnabled = preferences[PreferencesKeys.SOUND_ENABLED] ?: true,
             soundVolume = preferences[PreferencesKeys.SOUND_VOLUME] ?: 0.7f,
             swipeSensitivity = preferences[PreferencesKeys.SWIPE_SENSITIVITY] ?: 0.5f,
+            isSlipstreamEnabled = preferences[PreferencesKeys.SLIPSTREAM_ENABLED] ?: true,
             maxUnlockedLevel = preferences[PreferencesKeys.MAX_UNLOCKED_LEVEL] ?: 1
         )
     }
@@ -55,6 +57,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun updateSwipeSensitivity(sensitivity: Float) {
         context.dataStore.edit { it[PreferencesKeys.SWIPE_SENSITIVITY] = sensitivity }
+    }
+
+    suspend fun updateSlipstreamEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[PreferencesKeys.SLIPSTREAM_ENABLED] = enabled }
     }
 
     suspend fun updateMaxUnlockedLevel(level: Int) {

@@ -36,4 +36,8 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
     fun updateSwipeSensitivity(sensitivity: Float) {
         viewModelScope.launch { repository.updateSwipeSensitivity(sensitivity) }
     }
+
+    fun updateSlipstreamEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateSlipstreamEnabled(enabled) }
+    }
 }

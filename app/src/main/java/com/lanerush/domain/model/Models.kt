@@ -36,6 +36,7 @@ data class UserSettings(
     val isSoundEnabled: Boolean = true,
     val soundVolume: Float = 0.7f,
     val swipeSensitivity: Float = 0.5f,
+    val isSlipstreamEnabled: Boolean = true,
     val maxUnlockedLevel: Int = 1
 )
 

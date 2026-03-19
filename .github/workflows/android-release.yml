@@ -38,7 +38,7 @@ jobs:
           echo "${{ secrets.DEBUG_KEYSTORE }}" | base64 --decode > app/debug.keystore
 
       - name: 🔨 Build Signed APK
-        run: ./gradlew assembleDebug -Pandroid.injected.signing.store.file=debug.keystore -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleDebug -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/app/debug.keystore -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
 
       - name: 🚀 Create GitHub Release & Upload APK
         uses: softprops/action-gh-release@v2

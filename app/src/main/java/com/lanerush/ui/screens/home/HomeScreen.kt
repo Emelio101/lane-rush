@@ -250,6 +250,8 @@ fun HowToPlayDialog(onDismiss: () -> Unit) {
                 InstructionItem("🔥", "THROTTLE", "Hold your finger anywhere on the screen to accelerate.")
                 InstructionItem("🛑", "BRAKE", "Release your finger to slow down and avoid obstacles.")
                 InstructionItem("↔️", "STEER", "Swipe Left or Right to quickly switch between lanes.")
+                InstructionItem("🚥", "START", "Watch the 5 red lights. The race begins only when they all go out!")
+                InstructionItem("📊", "TELEMETRY", "Monitor real-time gaps (▲ Deficit / ▼ Lead) and dynamic FPS in the HUD.")
                 InstructionItem("🏁", "GOAL", "Reach the finish distance. You MUST be in Rank 1 to win and unlock the next level!")
                 
                 Spacer(Modifier.height(24.dp))

@@ -95,6 +95,10 @@ data class GameState(
     val isPaused: Boolean           = false,
     val isVictory: Boolean          = false,
     val isDrafting: Boolean         = false,
+    val gapAhead: String?           = null, // e.g. "+0.450"
+    val gapBehind: String?          = null, // e.g. "-1.200"
+    val startLights: Int            = -1,   // 0 to 5 (red lights), -1 (race on/hidden)
+    val isStarting: Boolean         = false,
     val message: String             = "",
     val level: Int                  = 1,
     val difficulty: Difficulty      = Difficulty.MEDIUM,

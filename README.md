@@ -4,8 +4,9 @@ Lane Rush is a high-performance, production-ready Android game built with **Kotl
 
 ## 🚀 Features
 
-- **Dynamic Game Engine**: Smooth 60fps game loop using Kotlin Coroutines and StateFlow.
-- **Advanced Metrics**: Real-time tracking of Peak Speed and Average Speed.
+- **Starting Sequence**: Authentic 5-light red countdown with staggered grid formation.
+- **Dynamic Telemetry HUD**: Real-time interval gaps and dynamic FPS monitoring.
+- **Dynamic Game Engine**: Smooth performance-optimized game loop with AI collision avoidance.
 - **Level Progression System**: 10 levels that must be unlocked sequentially by finishing in Rank 1.
 - **Customizable Settings**: Toggle between KMH/MPH, Light/Dark themes, adjust Sound/Volume, and view the Developer Profile.
 - **Swipe Controls**: Intuitive lane-switching via swipe gestures.

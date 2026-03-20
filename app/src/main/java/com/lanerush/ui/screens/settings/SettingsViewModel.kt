@@ -40,4 +40,12 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
     fun updateSlipstreamEnabled(enabled: Boolean) {
         viewModelScope.launch { repository.updateSlipstreamEnabled(enabled) }
     }
+
+    fun updateTargetFps(fps: Int) {
+        viewModelScope.launch { repository.updateTargetFps(fps) }
+    }
+
+    fun updateShowFps(show: Boolean) {
+        viewModelScope.launch { repository.updateShowFps(show) }
+    }
 }

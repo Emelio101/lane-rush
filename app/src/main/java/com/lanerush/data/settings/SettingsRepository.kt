@@ -24,6 +24,8 @@ class SettingsRepository(private val context: Context) {
         val SOUND_VOLUME = floatPreferencesKey("sound_volume")
         val SWIPE_SENSITIVITY = floatPreferencesKey("swipe_sensitivity")
         val SLIPSTREAM_ENABLED = booleanPreferencesKey("slipstream_enabled")
+        val TARGET_FPS = intPreferencesKey("target_fps")
+        val SHOW_FPS = booleanPreferencesKey("show_fps")
         val MAX_UNLOCKED_LEVEL = intPreferencesKey("max_unlocked_level")
     }
 
@@ -35,6 +37,8 @@ class SettingsRepository(private val context: Context) {
             soundVolume = preferences[PreferencesKeys.SOUND_VOLUME] ?: 0.7f,
             swipeSensitivity = preferences[PreferencesKeys.SWIPE_SENSITIVITY] ?: 0.5f,
             isSlipstreamEnabled = preferences[PreferencesKeys.SLIPSTREAM_ENABLED] ?: true,
+            targetFps = preferences[PreferencesKeys.TARGET_FPS] ?: 60,
+            showFps = preferences[PreferencesKeys.SHOW_FPS] ?: false,
             maxUnlockedLevel = preferences[PreferencesKeys.MAX_UNLOCKED_LEVEL] ?: 1
         )
     }
@@ -61,6 +65,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun updateSlipstreamEnabled(enabled: Boolean) {
         context.dataStore.edit { it[PreferencesKeys.SLIPSTREAM_ENABLED] = enabled }
+    }
+
+    suspend fun updateTargetFps(fps: Int) {
+        context.dataStore.edit { it[PreferencesKeys.TARGET_FPS] = fps }
+    }
+
+    suspend fun updateShowFps(show: Boolean) {
+        context.dataStore.edit { it[PreferencesKeys.SHOW_FPS] = show }
     }
 
     suspend fun updateMaxUnlockedLevel(level: Int) {

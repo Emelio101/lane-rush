@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -59,6 +60,8 @@ fun SettingsScreen(
         onVolumeChange = { viewModel.updateSoundVolume(it) },
         onSensitivityChange = { viewModel.updateSwipeSensitivity(it) },
         onSlipstreamToggle = { viewModel.updateSlipstreamEnabled(it) },
+        onFpsLimitChange = { viewModel.updateTargetFps(it) },
+        onShowFpsToggle = { viewModel.updateShowFps(it) },
         onNavigateBack = onNavigateBack,
         onSignOut      = onSignOut
     )
@@ -77,6 +80,8 @@ fun SettingsContent(
     onVolumeChange: (Float) -> Unit,
     onSensitivityChange: (Float) -> Unit,
     onSlipstreamToggle: (Boolean) -> Unit,
+    onFpsLimitChange: (Int) -> Unit,
+    onShowFpsToggle: (Boolean) -> Unit,
     onNavigateBack: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -233,6 +238,83 @@ fun SettingsContent(
                     Switch(
                         checked = settings.isSlipstreamEnabled,
                         onCheckedChange = onSlipstreamToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colorScheme.primary,
+                            checkedTrackColor = colorScheme.primary.copy(alpha = 0.3f)
+                        )
+                    )
+                }
+            }
+
+            // ── GRAPHICS ──────────────────────────────────────────────────
+            val context = LocalContext.current
+            val maxRefreshRate = remember {
+                val display = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    context.display
+                } else {
+                    @Suppress("DEPRECATION")
+                    val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
+                    wm.defaultDisplay
+                }
+                display?.supportedModes?.maxOfOrNull { it.refreshRate }?.toInt() ?: 60
+            }
+            val availableFpsOptions = remember(maxRefreshRate) {
+                listOf(60, 90, 120).filter { it <= maxRefreshRate || it == 60 }
+            }
+
+            SettingsSection(
+                icon = Icons.Default.GraphicEq,
+                title = "Graphics",
+                accent = colorScheme.primary
+            ) {
+                Row(
+                    modifier          = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("FPS Limit", color = colorScheme.onSurface, fontSize = 14.sp)
+                        Text("Device Max: ${maxRefreshRate}Hz", fontSize = 11.sp, color = colorScheme.onSurfaceVariant)
+                    }
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(colorScheme.surfaceVariant)
+                            .padding(2.dp)
+                    ) {
+                        availableFpsOptions.forEach { fps ->
+                            val isSelected = settings.targetFps == fps
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSelected) colorScheme.primary else Color.Transparent)
+                                    .clickable { onFpsLimitChange(fps) }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    "$fps",
+                                    color = if (isSelected) colorScheme.onPrimary else colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(color = colorScheme.onSurface.copy(alpha = 0.08f))
+                Spacer(Modifier.height(16.dp))
+
+                Row(
+                    modifier          = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Show FPS Counter", color = colorScheme.onSurface, fontSize = 14.sp)
+                    Switch(
+                        checked = settings.showFps,
+                        onCheckedChange = onShowFpsToggle,
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = colorScheme.primary,
                             checkedTrackColor = colorScheme.primary.copy(alpha = 0.3f)
@@ -609,6 +691,8 @@ fun SettingsPreview() {
             onVolumeChange = {},
             onSensitivityChange = {},
             onSlipstreamToggle = {},
+            onFpsLimitChange = {},
+            onShowFpsToggle = {},
             onNavigateBack = {},
             onSignOut      = {}
         )

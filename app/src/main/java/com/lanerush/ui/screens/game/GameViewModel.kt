@@ -57,8 +57,12 @@ class GameViewModel(
         }
     }
 
-    fun startGame() {
-        engine.startGame(level = _selectedLevel.value, difficulty = _selectedDifficulty.value)
+    fun startGame(targetFps: Int = 60) {
+        engine.startGame(
+            level      = _selectedLevel.value,
+            difficulty = _selectedDifficulty.value,
+            targetFps  = targetFps
+        )
     }
 
     fun togglePause() = engine.togglePause()

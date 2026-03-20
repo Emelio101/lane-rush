@@ -18,7 +18,6 @@ class SoundManager(context: Context) {
     private val pending    = mutableMapOf<String, Boolean>() // key → pendingPlay
     
     private var musicPlayer: MediaPlayer? = null
-    private var enginePlayer: MediaPlayer? = null
     
     private var isSoundEnabled = true
     private var volume = 0.7f
@@ -57,15 +56,11 @@ class SoundManager(context: Context) {
             Log.e("SoundManager", "Error loading sounds", e)
         }
 
-        // ── Initialize Music & Engine Loops (MediaPlayer) ──────────────
+        // ── Initialize Music Loops (MediaPlayer) ──────────────
         try {
             musicPlayer = MediaPlayer.create(context, R.raw.lane_rush_theme_song).apply {
                 isLooping = true
                 setVolume(volume * 0.5f, volume * 0.5f)
-            }
-            enginePlayer = MediaPlayer.create(context, R.raw.engine_loop).apply {
-                isLooping = true
-                setVolume(volume * 0.4f, volume * 0.4f)
             }
         } catch (e: Exception) {
             Log.e("SoundManager", "Error creating media players", e)
@@ -78,13 +73,10 @@ class SoundManager(context: Context) {
         
         try {
             val musicVol = volume * 0.5f
-            val engineVol = volume * 0.4f
             musicPlayer?.setVolume(musicVol, musicVol)
-            enginePlayer?.setVolume(engineVol, engineVol)
 
             if (!enabled) {
                 if (musicPlayer?.isPlaying == true) musicPlayer?.pause()
-                if (enginePlayer?.isPlaying == true) enginePlayer?.pause()
             }
         } catch (e: Exception) {
             Log.e("SoundManager", "Error updating volumes", e)
@@ -117,28 +109,6 @@ class SoundManager(context: Context) {
         }
     }
 
-    fun playEngine() {
-        if (!isSoundEnabled) return
-        try {
-            if (enginePlayer?.isPlaying == false) {
-                enginePlayer?.start()
-            }
-        } catch (e: Exception) {
-            Log.e("SoundManager", "Error playing engine", e)
-        }
-    }
-
-    fun stopEngine() {
-        try {
-            if (enginePlayer?.isPlaying == true) {
-                enginePlayer?.pause()
-                enginePlayer?.seekTo(0)
-            }
-        } catch (e: Exception) {
-            Log.e("SoundManager", "Error stopping engine", e)
-        }
-    }
-
     private fun play(key: String) {
         if (!isSoundEnabled) return
         val id = soundIds[key] ?: return
@@ -154,10 +124,6 @@ class SoundManager(context: Context) {
             musicPlayer?.stop()
             musicPlayer?.release()
             musicPlayer = null
-            
-            enginePlayer?.stop()
-            enginePlayer?.release()
-            enginePlayer = null
             
             soundPool.release()
         } catch (e: Exception) {

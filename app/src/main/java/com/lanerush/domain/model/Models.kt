@@ -37,6 +37,8 @@ data class UserSettings(
     val soundVolume: Float = 0.7f,
     val swipeSensitivity: Float = 0.5f,
     val isSlipstreamEnabled: Boolean = true,
+    val targetFps: Int = 60,
+    val showFps: Boolean = false,
     val maxUnlockedLevel: Int = 1
 )
 

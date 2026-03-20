@@ -98,7 +98,7 @@ fun GameScreen(
 
     // ── Start the game loop when this screen enters ───────────────
     LaunchedEffect(Unit) { 
-        viewModel.startGame() 
+        viewModel.startGame(targetFps = settings.targetFps) 
     }
 
     // ── Audio Management & Settings Sync ────────────────────────────
@@ -111,12 +111,30 @@ fun GameScreen(
     ) {
         // 1. ALWAYS apply the latest volume/mute settings FIRST
         soundManager.updateSettings(settings.isSoundEnabled, settings.soundVolume)
+    }
 
-        // 2. THEN decide if the engine should be roaring
-        if (isAppInForeground && !gameState.isPaused && !gameState.isGameOver && settings.isSoundEnabled) {
-            soundManager.playEngine()
-        } else {
-            soundManager.stopEngine()
+    // ── Dynamic FPS Measurement ─────────────────────────────────────
+    var dynamicFps by remember { mutableIntStateOf(settings.targetFps) }
+    if (settings.showFps) {
+        LaunchedEffect(Unit) {
+            var lastFrameTime = System.nanoTime()
+            val frameTimes = LongArray(20) // Rolling average over 20 frames
+            var frameIndex = 0
+            while (true) {
+                withFrameNanos { frameTime ->
+                    val delta = frameTime - lastFrameTime
+                    lastFrameTime = frameTime
+                    frameTimes[frameIndex] = delta
+                    frameIndex = (frameIndex + 1) % frameTimes.size
+                    
+                    if (frameIndex == 0) {
+                        val avgDelta = frameTimes.average()
+                        if (avgDelta > 0) {
+                            dynamicFps = (1_000_000_000.0 / avgDelta).toInt()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -125,11 +143,9 @@ fun GameScreen(
             when (event) {
                 GameViewModel.SoundEvent.THROTTLE -> { /* SFX for throttle? */ }
                 GameViewModel.SoundEvent.CRASH    -> {
-                    soundManager.stopEngine()
                     soundManager.playCrash()
                 }
                 GameViewModel.SoundEvent.VICTORY  -> {
-                    soundManager.stopEngine()
                     soundManager.playVictory()
                 }
             }
@@ -148,6 +164,7 @@ fun GameScreen(
     GameContent(
         gameState      = gameState,
         settings       = settings,
+        dynamicFps     = dynamicFps,
         onThrottleOn   = { viewModel.throttleOn() },
         onThrottleOff  = { viewModel.throttleOff() },
         onSwipe        = { viewModel.onSwipe(it) },
@@ -178,6 +195,7 @@ fun GameScreen(
 fun GameContent(
     gameState: GameState,
     settings: UserSettings,
+    dynamicFps: Int,
     onThrottleOn: () -> Unit,
     onThrottleOff: () -> Unit,
     onSwipe: (GameEngine.SwipeDirection) -> Unit,
@@ -290,11 +308,17 @@ fun GameContent(
             state         = gameState,
             unit          = settings.speedUnit,
             settings      = settings,
+            dynamicFps    = dynamicFps,
             onTogglePause = onTogglePause
         )
 
+        // ── Start Sequence Overlay ──────────────────────────────────────
+        if (gameState.isStarting) {
+            StartLightsOverlay(gameState.startLights)
+        }
+
         // ── Throttle bar ──────────────────────────────────────────────────
-        if (!gameState.isGameOver && !gameState.isPaused) {
+        if (!gameState.isGameOver && !gameState.isPaused && !gameState.isStarting) {
             ThrottleBar(
                 speedFraction = speedFraction,
                 throttleOn    = gameState.throttleOn,
@@ -589,28 +613,84 @@ private fun DrawScope.drawBarricade(center: Offset, laneW: Float, tick: Float) {
 }
 
 @Composable
-fun HUDOverlay(state: GameState, unit: SpeedUnit, settings: UserSettings, onTogglePause: () -> Unit) {
+private fun GapBadge(gap: String, isAhead: Boolean) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.4f),
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.clip(RoundedCornerShape(6.dp))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (isAhead) "▲" else "▼",
+                color = if (isAhead) Color(0xFFFF2D55) else C.green,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Black
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = gap,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+            )
+        }
+    }
+}
+
+@Composable
+fun HUDOverlay(state: GameState, unit: SpeedUnit, settings: UserSettings, dynamicFps: Int, onTogglePause: () -> Unit) {
     val displaySpeed = state.currentSpeed.toDisplaySpeed(unit)
     val diffColor = when (state.difficulty) { Difficulty.EASY -> Color(0xFF00E676); Difficulty.MEDIUM -> Color(0xFFFFD600); Difficulty.HARD -> Color(0xFFFF2D55) }
     
-    Column(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp)) {
         Row(modifier = Modifier.fillMaxWidth().pointerInput(Unit) { detectTapGestures { } }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                HUDCard(Icons.AutoMirrored.Filled.TrendingUp, "RANK", "${state.rank}/6", C.green)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Top) {
+                // --- RANK + GAPS HUB ---
+                Column(horizontalAlignment = Alignment.Start, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    HUDCard(Icons.AutoMirrored.Filled.TrendingUp, "RANK", "${state.rank}/6", C.green)
+                    
+                    if (!state.isGameOver && !state.isPaused && !state.isStarting) {
+                        state.gapAhead?.let { GapBadge(it, isAhead = true) }
+                        state.gapBehind?.let { GapBadge(it, isAhead = false) }
+                    }
+                }
+
                 HUDCard(Icons.Default.Timer, "DIST", "${state.distanceTravelled.toInt()}m", C.yellow)
                 HUDCard(Icons.Default.Speed, "SPEED", "$displaySpeed ${unit.label()}", C.blue)
-                Box(Modifier.clip(RoundedCornerShape(13.dp)).background(C.hudBg).drawBehind { drawRoundRect(diffColor.copy(alpha = 0.4f), cornerRadius = CornerRadius(13.dp.toPx()), style = Stroke(1.dp.toPx())) }.padding(horizontal = 7.dp, vertical = 6.dp), Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("LVL ${state.level}", color = diffColor, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp); Text(state.difficulty.label.uppercase(), color = C.white.copy(alpha = 0.55f), fontSize = 7.sp, letterSpacing = 0.8.sp) }
+                
+                Box(Modifier.height(48.dp).clip(RoundedCornerShape(10.dp)).background(C.hudBg).drawBehind { drawRoundRect(diffColor.copy(alpha = 0.4f), cornerRadius = CornerRadius(10.dp.toPx()), style = Stroke(1.dp.toPx())) }.padding(horizontal = 10.dp), Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) { 
+                        Text("LVL ${state.level}", color = diffColor, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
+                        Text(state.difficulty.label.uppercase(), color = C.white.copy(alpha = 0.55f), fontSize = 7.sp, letterSpacing = 0.8.sp) 
+                    }
                 }
             }
-            Box(Modifier.size(46.dp).clip(RoundedCornerShape(13.dp)).background(C.hudBg).drawBehind { drawRoundRect(C.hudBorder.copy(alpha = 0.3f), cornerRadius = CornerRadius(13.dp.toPx()), style = Stroke(1.dp.toPx())) }, Alignment.Center) {
-                IconButton(onClick = onTogglePause, modifier = Modifier.fillMaxSize()) { Icon(if (state.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause, if (state.isPaused) "Resume" else "Pause", tint = C.white, modifier = Modifier.size(20.dp)) }
+            
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).background(C.hudBg).drawBehind { drawRoundRect(C.hudBorder.copy(alpha = 0.3f), cornerRadius = CornerRadius(10.dp.toPx()), style = Stroke(1.dp.toPx())) }, Alignment.Center) {
+                    IconButton(onClick = onTogglePause, modifier = Modifier.fillMaxSize()) { 
+                        Icon(if (state.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause, if (state.isPaused) "Resume" else "Pause", tint = C.white, modifier = Modifier.size(22.dp)) 
+                    }
+                }
+                if (settings.showFps) {
+                    Text(
+                        text = "$dynamicFps FPS",
+                        color = C.green,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
 
-        // ── Drafting Indicator ──────────────────────────────────────
+        // ── Slipstream Indicator ──────────────────────────────────────
         if (state.isDrafting && settings.isSlipstreamEnabled) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Surface(
                 color = C.laneGlow.copy(alpha = 0.15f),
                 modifier = Modifier
@@ -618,10 +698,10 @@ fun HUDOverlay(state: GameState, unit: SpeedUnit, settings: UserSettings, onTogg
                     .clip(RoundedCornerShape(8.dp))
                     .drawBehind { drawRoundRect(C.laneGlow.copy(alpha = 0.5f), style = Stroke(1.dp.toPx()), cornerRadius = CornerRadius(8.dp.toPx())) }
             ) {
-                Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.AutoMirrored.Filled.TrendingUp, null, tint = C.laneGlow, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Slipstream - SPEED BOOST ACTIVE", color = C.laneGlow, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.TrendingUp, null, tint = C.laneGlow, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Slipstream - SPEED BOOST ACTIVE", color = C.laneGlow, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                 }
             }
         }
@@ -630,8 +710,45 @@ fun HUDOverlay(state: GameState, unit: SpeedUnit, settings: UserSettings, onTogg
 
 @Composable
 private fun HUDCard(icon: ImageVector, label: String, value: String, accent: Color) {
-    Surface(color = C.hudBg, modifier = Modifier.clip(RoundedCornerShape(13.dp)).width(80.dp).drawBehind { drawRoundRect(accent.copy(alpha = 0.3f), cornerRadius = CornerRadius(13.dp.toPx()), style = Stroke(1.dp.toPx())) }) {
-        Column(Modifier.padding(horizontal = 5.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(icon, null, tint = accent, modifier = Modifier.size(13.dp)); Spacer(Modifier.height(2.dp)); Text(label, color = C.white.copy(alpha = 0.45f), fontSize = 8.sp, letterSpacing = 0.8.sp); Text(value, color = C.white, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, textAlign = TextAlign.Center) }
+    Surface(color = C.hudBg, modifier = Modifier.clip(RoundedCornerShape(10.dp)).width(82.dp).height(48.dp).drawBehind { drawRoundRect(accent.copy(alpha = 0.3f), cornerRadius = CornerRadius(10.dp.toPx()), style = Stroke(1.dp.toPx())) }) {
+        Column(Modifier.padding(horizontal = 4.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { 
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(12.dp))
+                Text(label, color = C.white.copy(alpha = 0.45f), fontSize = 9.sp, letterSpacing = 0.5.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(value, color = C.white, fontSize = 13.sp, fontWeight = FontWeight.Black, maxLines = 1, textAlign = TextAlign.Center) 
+        }
+    }
+}
+
+@Composable
+private fun StartLightsOverlay(lights: Int) {
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("STANDBY", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 4.sp)
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                repeat(5) { i ->
+                    val isOn = i < lights
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(if (isOn) Color(0xFFFF0000) else Color(0xFF220000))
+                            .drawBehind {
+                                if (isOn) {
+                                    drawCircle(Color(0xFFFF0000).copy(alpha = 0.4f), radius = size.minDimension * 0.8f)
+                                }
+                                drawCircle(Color.White.copy(alpha = 0.1f), style = Stroke(2.dp.toPx()))
+                            }
+                    )
+                }
+            }
+            if (lights == 5) {
+                Spacer(Modifier.height(20.dp))
+                Text("GET READY...", color = Color.Red, fontSize = 18.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+            }
+        }
     }
 }
 
@@ -690,4 +807,4 @@ private fun StatRow(label: String, value: String, accent: Color) {
 
 @Preview(showBackground = true)
 @Composable
-fun GamePreview() { LaneRushTheme { GameContent(gameState = GameState(distanceTravelled = 1200f, currentSpeed = 1.2f, rank = 3, level = 5, difficulty = Difficulty.HARD, throttleOn = true), settings = UserSettings(), onThrottleOn = {}, onThrottleOff = {}, onSwipe = {}, onTap = {}, onTogglePause = {}, onRestart = {}, onNextLevel = {}, onNavigateBack = {}) } }
+fun GamePreview() { LaneRushTheme { GameContent(gameState = GameState(distanceTravelled = 1200f, currentSpeed = 1.2f, rank = 3, level = 5, difficulty = Difficulty.HARD, throttleOn = true), settings = UserSettings(), dynamicFps = 60, onThrottleOn = {}, onThrottleOff = {}, onSwipe = {}, onTap = {}, onTogglePause = {}, onRestart = {}, onNextLevel = {}, onNavigateBack = {}) } }

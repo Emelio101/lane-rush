@@ -1,24 +1,27 @@
 package com.lanerush.ui.screens.game
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.lanerush.data.settings.SettingsRepository
+import com.lanerush.data.work.ScoreSubmitRequest
 import com.lanerush.domain.model.Difficulty
 import com.lanerush.domain.model.Score
 import com.lanerush.domain.repository.AuthRepository
-import com.lanerush.domain.repository.LeaderboardRepository
 import com.lanerush.engine.GameEngine
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 
 class GameViewModel(
     private val authRepository: AuthRepository,
-    private val leaderboardRepository: LeaderboardRepository,
-    private val settingsRepository: com.lanerush.data.settings.SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val appContext: Context
 ) : ViewModel() {
 
     val engine    = GameEngine(viewModelScope)
@@ -37,12 +40,15 @@ class GameViewModel(
             if (state.isGameOver) {
                 if (state.isVictory) {
                     _soundEvents.emit(SoundEvent.VICTORY)
-                    // Unlock next level if currently winning current max level
                     settingsRepository.updateMaxUnlockedLevel(state.level + 1)
                 } else {
                     _soundEvents.emit(SoundEvent.CRASH)
                 }
-                submitFinalScore(state.distanceTravelled.toInt(), state.peakSpeed, state.avgSpeed)
+                submitFinalScore(
+                    distance = state.distanceTravelled.toInt(),
+                    topSpeed = state.peakSpeed,
+                    avgSpeed = state.avgSpeed
+                )
             }
         }.launchIn(viewModelScope)
     }
@@ -57,49 +63,41 @@ class GameViewModel(
         }
     }
 
-    fun startGame(targetFps: Int = 60) {
-        engine.startGame(
-            level      = _selectedLevel.value,
-            difficulty = _selectedDifficulty.value,
-            targetFps  = targetFps
-        )
+    fun startGame() {
+        viewModelScope.launch {
+            val currentSettings = settingsRepository.userSettingsFlow.first()
+            engine.startGame(
+                level             = _selectedLevel.value,
+                difficulty        = _selectedDifficulty.value,
+                targetFps         = currentSettings.targetFps,
+                slipstreamEnabled = currentSettings.isSlipstreamEnabled
+            )
+        }
     }
 
     fun togglePause() = engine.togglePause()
+    fun pauseGame()   = engine.pause()
 
-    fun pauseGame() = engine.pause()
-
-    /** Throttle pressed (finger down) */
-    fun throttleOn()  {
+    fun throttleOn() {
         viewModelScope.launch { _soundEvents.emit(SoundEvent.THROTTLE) }
         engine.setThrottle(true)
     }
-
-    /** Throttle released (finger up) */
     fun throttleOff() = engine.setThrottle(false)
 
-    fun onSwipe(direction: GameEngine.SwipeDirection) {
-        engine.onSwipe(direction)
-    }
-
-    fun onTap(lane: Int) {
-        engine.onTap(lane)
-    }
+    fun onSwipe(direction: GameEngine.SwipeDirection) = engine.onSwipe(direction)
+    fun onTap(lane: Int)                              = engine.onTap(lane)
 
     private fun submitFinalScore(distance: Int, topSpeed: Float, avgSpeed: Float) {
         val user = authRepository.getCurrentUser() ?: return
-        viewModelScope.launch {
-            leaderboardRepository.submitScore(
-                Score(
-                    uid                = user.uid,
-                    displayName        = user.displayName,
-                    photoUrl           = user.photoUrl,
-                    score              = distance,
-                    topSpeedReached    = topSpeed,
-                    avgSpeedDuringRace = avgSpeed
-                )
-            )
-        }
+        val score = Score(
+            uid                = user.uid,
+            displayName        = user.displayName,
+            photoUrl           = user.photoUrl,
+            score              = distance,
+            topSpeedReached    = topSpeed,
+            avgSpeedDuringRace = avgSpeed
+        )
+        ScoreSubmitRequest.enqueue(appContext, score)
     }
 
     enum class SoundEvent { THROTTLE, CRASH, VICTORY }

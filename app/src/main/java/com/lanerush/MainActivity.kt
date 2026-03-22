@@ -5,14 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -52,14 +45,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // --- Full Screen / Immersive Mode ---
+
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-
         enableEdgeToEdge()
+
         setContent {
             val settings by settingsRepository.userSettingsFlow.collectAsState(
                 initial = com.lanerush.domain.model.UserSettings()
@@ -86,67 +78,60 @@ fun LaneRushApp(
     leaderboardRepository: LeaderboardRepositoryImpl,
     settingsRepository: SettingsRepository
 ) {
-    val navController  = rememberNavController()
-    val context        = LocalContext.current
-    val soundManager   = remember { SoundManager(context) }
-    
+    val navController = rememberNavController()
+    val context       = LocalContext.current
+
+    // FIX: single SoundManager instance for the entire app lifetime
+    val soundManager  = remember { SoundManager(context) }
+
     val settings by settingsRepository.userSettingsFlow.collectAsState(
         initial = com.lanerush.domain.model.UserSettings()
     )
 
-    // ── Lifecycle Management (Stop all sound when app is in background) ──
+    // ── Lifecycle: pause sound when app backgrounds ──────────────────
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var isAppInForeground by remember { mutableStateOf(true) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            isAppInForeground = event == Lifecycle.Event.ON_RESUME || 
-                               event == Lifecycle.Event.ON_START
+            isAppInForeground = event == Lifecycle.Event.ON_RESUME ||
+                    event == Lifecycle.Event.ON_START
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // ── Sync Global Music Settings ──────────────────────────────────
+    // ── Sync volume / mute globally ──────────────────────────────────
     LaunchedEffect(settings.isSoundEnabled, settings.soundVolume) {
         soundManager.updateSettings(settings.isSoundEnabled, settings.soundVolume)
     }
 
-    // ── Menu Music Management ───────────────────────────────────────
+    // ── Menu music ───────────────────────────────────────────────────
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
-    
+
     LaunchedEffect(currentRoute, isAppInForeground) {
-        if (!isAppInForeground) {
-            soundManager.stopMusic()
-            return@LaunchedEffect
-        }
-
-        // Theme song starts ONLY when user reaches "home" or subsequent menus, 
-        // but stops when entering the actual game.
+        if (!isAppInForeground) { soundManager.stopMusic(); return@LaunchedEffect }
         val isMenuRoute = currentRoute in listOf("home", "level_select", "settings", "leaderboard")
-        
-        if (isMenuRoute) {
-            soundManager.playMusic()
-        } else {
-            soundManager.stopMusic()
-        }
+        if (isMenuRoute) soundManager.playMusic() else soundManager.stopMusic()
     }
 
-    DisposableEffect(Unit) {
-        onDispose { soundManager.release() }
-    }
+    // FIX: single release point for the one SoundManager instance
+    DisposableEffect(Unit) { onDispose { soundManager.release() } }
 
     val startDest = if (authRepository.getCurrentUser() != null) "home" else "login"
 
-    // GameViewModel is shared between level_select and game screens
+    // FIX: GameViewModel no longer holds LeaderboardRepository (score goes via WorkManager)
+    //      It receives appContext so it can enqueue WorkManager jobs.
     val gameViewModel: GameViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return GameViewModel(authRepository, leaderboardRepository, settingsRepository) as T
+                return GameViewModel(
+                    authRepository    = authRepository,
+                    settingsRepository = settingsRepository,
+                    appContext         = context.applicationContext
+                ) as T
             }
         }
     )
@@ -162,12 +147,9 @@ fun LaneRushApp(
                     }
                 }
             )
-            LoginScreen(
-                viewModel     = vm,
-                onAuthSuccess = {
-                    navController.navigate("home") { popUpTo("login") { inclusive = true } }
-                }
-            )
+            LoginScreen(viewModel = vm, onAuthSuccess = {
+                navController.navigate("home") { popUpTo("login") { inclusive = true } }
+            })
         }
 
         composable("home") {
@@ -224,11 +206,13 @@ fun LaneRushApp(
         }
 
         composable("game") {
+            // FIX: soundManager is injected — GameScreen no longer creates its own instance
             GameScreen(
-                viewModel      = gameViewModel,
-                settings       = settings,
+                viewModel         = gameViewModel,
+                settings          = settings,
+                soundManager      = soundManager,
                 isAppInForeground = isAppInForeground,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack    = { navController.popBackStack() }
             )
         }
 
@@ -237,14 +221,12 @@ fun LaneRushApp(
                 factory = object : ViewModelProvider.Factory {
                     override fun <T : ViewModel> create(modelClass: Class<T>): T {
                         @Suppress("UNCHECKED_CAST")
+                        // FIX: passes the interface, not the impl — no downcast needed in VM
                         return LeaderboardViewModel(authRepository, leaderboardRepository) as T
                     }
                 }
             )
-            LeaderboardScreen(
-                viewModel      = vm,
-                onNavigateBack = { navController.popBackStack() }
-            )
+            LeaderboardScreen(viewModel = vm, onNavigateBack = { navController.popBackStack() })
         }
     }
 }

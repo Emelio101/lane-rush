@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.lanerush.ui.screens.settings
 
 import androidx.compose.animation.animateColorAsState
@@ -176,9 +178,9 @@ fun SettingsContent(
                         )
                     )
                 }
-                
+
                 Spacer(Modifier.height(16.dp))
-                
+
                 Column(Modifier.fillMaxWidth()) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("Volume", color = colorScheme.onSurface, fontSize = 14.sp)
@@ -221,7 +223,7 @@ fun SettingsContent(
                         color = colorScheme.onSurfaceVariant
                     )
                 }
-                
+
                 Spacer(Modifier.height(16.dp))
                 HorizontalDivider(color = colorScheme.onSurface.copy(alpha = 0.08f))
                 Spacer(Modifier.height(16.dp))
@@ -259,7 +261,8 @@ fun SettingsContent(
                 display?.supportedModes?.maxOfOrNull { it.refreshRate }?.toInt() ?: 60
             }
             val availableFpsOptions = remember(maxRefreshRate) {
-                listOf(60, 90, 120).filter { it <= maxRefreshRate || it == 60 }
+                // 30 and 60 are always available; 90 and 120 only show if the display supports them
+                listOf(30, 60, 90, 120).filter { it <= maxRefreshRate }
             }
 
             SettingsSection(

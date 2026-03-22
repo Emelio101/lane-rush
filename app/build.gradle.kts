@@ -15,8 +15,8 @@ android {
         applicationId = "com.lanerush"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.1.4"
+        versionCode = 5
+        versionName = "0.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -73,6 +73,7 @@ dependencies {
     implementation(libs.googleid)
 
     testImplementation(libs.junit)
+    implementation(libs.androidx.work.runtime.ktx)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

@@ -91,6 +91,7 @@ data class GameState(
     val distanceTravelled: Float    = 0f,
     val rank: Int                   = 1,
     val ticks: Long                 = 0,
+    val actualFps: Int              = 60,
     val isGameOver: Boolean         = false,
     val isPaused: Boolean           = false,
     val isVictory: Boolean          = false,

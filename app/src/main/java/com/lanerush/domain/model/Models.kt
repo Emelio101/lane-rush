@@ -46,7 +46,8 @@ data class GameEntity(
     val id: Int,
     val lane: Int,
     val y: Float,
-    val type: EntityType
+    val type: EntityType,
+    val visualLane: Float? = null
 )
 
 enum class EntityType {

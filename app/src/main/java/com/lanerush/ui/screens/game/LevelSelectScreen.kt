@@ -73,7 +73,10 @@ fun LevelSelectScreen(
         maxUnlockedLevel   = settings.maxUnlockedLevel,
         onLevelSelect      = { viewModel.setLevel(it) },
         onDifficultySelect = { viewModel.setDifficulty(it) },
-        onStartGame        = onStartGame,
+        onStartGame        = {
+            viewModel.startGame()  // reads targetFps + slipstreamEnabled from settings internally
+            onStartGame()          // then navigate
+        },
         onNavigateBack     = onNavigateBack
     )
 }
@@ -353,11 +356,11 @@ private fun LevelCard(
 
 /** Returns a color that grades from green (level 1) through yellow to red (level 10). */
 private fun levelAccent(level: Int): Color = when {
-    level <= 2  -> Color(0xFF00E676)  // green
-    level <= 4  -> Color(0xFF69F0AE)  // light green
-    level <= 6  -> Color(0xFFFFD600)  // gold
-    level <= 8  -> Color(0xFFFF6D00)  // orange
-    else        -> Color(0xFFFF2D55)  // red
+    level <= 2  -> Color(0xFF00E676)
+    level <= 4  -> Color(0xFF69F0AE)
+    level <= 6  -> Color(0xFFFFD600)
+    level <= 8  -> Color(0xFFFF6D00)
+    else        -> Color(0xFFFF2D55)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
